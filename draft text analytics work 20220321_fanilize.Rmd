@@ -1,0 +1,2107 @@
+---
+title: "Group 16 Text Analytics Assignment"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+# Install
+#install.packages("rjson") # for reading json file
+#install.packages("SnowballC") # for text stemming
+#install.packages("wordcloud") # word-cloud generator 
+#install.packages("RColorBrewer") # color palettes
+#install.packages("syuzhet") # for sentiment analysis
+#install.packages("ggplot2") # for plotting graphs
+#install.packages("dplyr") # for object manipulation
+#install.packages("qdap") # for text cleaning
+#install.packages("tm")  # for text cleaning
+#install.packages("gridExtra")
+#install.packages("RWeka")
+#install.packages("NLP")
+#install.packages("tidytext")
+#install.packages("naniar")
+#install.packages("tidyr") # for spread fucntion
+#install.packages("textdata") # for afinn 
+#install.packages("corrplot") # for nrc dictionary
+#install.packages("tictoc") # for timing code executions
+#install.packages("udpipe") # for lemmatization 
+#install.packages("ggtheme")
+#install.packages("topicmodels")
+#install.packages("stm")
+#install.packages("FSelector")
+#install.packages("sentimentr")
+#install.packages("foreign")
+#install.packages("reshape2")
+#install.packages("Hmisc")
+#install.packages("ppcor")
+#install.packages("factoextra")
+#install.packages("corrplot")
+#install.packages("DescTools")
+
+library(ppcor)
+library(factoextra)
+library(corrplot)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(jsonlite)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer)
+library(syuzhet)
+library(stringr)
+library(qdap)
+library(tm)
+library(gridExtra)
+library(RWeka)
+library(NLP)
+library(broom)
+library(tidytext)
+library(naniar)
+library(tidyr)
+library(textdata)
+library(corrplot)
+library(tictoc)
+library(udpipe)
+library(ggthemes)
+library(topicmodels)
+library(stm)
+library(FSelector)
+library(sentimentr)
+library(foreign)
+library(Hmisc)
+library(ROSE)
+library(DescTools)
+```
+
+# Pre-Processing Stage
+## Reading in the text data
+```{r, warning=FALSE, message=FALSE, results='hide'}
+# How to read the in the "json.gz" file?
+# Note, specify your unique path location (hint: hit "Tab" key)
+# TicToc recorded: 9.585 sec elapsed
+
+tic()
+# To read the "5-core data file" for Musical Instruments
+fivecore_data <- stream_in(gzfile("2014 Musical Instruments 5-core/reviews_Musical_Instruments_5.json.gz"))
+
+# To read the "metadata file" for Musical Instruments
+metadata <- stream_in(gzfile("2014 Musical Instruments metadata/metadata.strict"))
+toc()
+```
+
+## Preparing dataframe for VCorpus requirement
+```{r, warning=FALSE, message=FALSE}
+# To reduce dataset to 1000 rows only for coding efficiency
+# Original dataset will be restored upon coding being finalised
+# fivecore_data <- fivecore_data[1:1000,]
+
+# To remove NA values
+fivecore_data$reviewText <- na.omit(fivecore_data$reviewText)
+
+# To remove duplicate records
+fivecore_data <- distinct(fivecore_data)
+
+# To sort review by unixReviewTime
+fivecore_data <- fivecore_data[order(as.Date(as.POSIXct(fivecore_data$unixReviewTime, origin="1970-01-01"))),]
+
+# To create a column with repeated values called "doc"
+doc_rep <- data.frame(rep(c("doc"),times=NROW((tidy))))
+
+# To rename column to "doc_rep"
+names(doc_rep)[names(doc_rep) == colnames(doc_rep)] <- "doc_rep"
+
+# To add row numbers to new column called "doc_id"
+fivecore_data$doc_id <- 1:nrow(fivecore_data)
+
+# To concatenate "doc_rep"
+fivecore_data$doc_id <- paste0(doc_rep$doc_rep,fivecore_data$doc_id)
+
+# To rearrange columns into required format of doc_id", "text", "var3", "var4"...
+col_order <- c("doc_id", "reviewText","asin", "overall",
+               "helpful", "summary", "unixReviewTime",
+               "reviewerID", "reviewerName", "reviewTime" )
+fivecore_reordered <- fivecore_data[, col_order]
+fivecore_selected_a <- fivecore_reordered[,(1:7)]
+fivecore_selected_b <- fivecore_reordered[,(1:7)]
+
+# To rename columns to standard "doc_id", "text", etc format required for VCorpus from a data frame
+names(fivecore_selected_a) <- c("doc_id","text","asin","ratings","helpfulness", "summary", "review_time")
+
+names(fivecore_selected_b) <- c("doc_id","text","asin","ratings","helpfulness", "summary", "review_time")
+```
+
+## Cleaning dataframe with qdap package
+```{r, warning=FALSE}
+# To create a function to clean tidy data
+qdap_clean_part_a <- function(x) {
+  x <- replace_abbreviation(x) # eg. "Mr." becomes "Mister"
+  x <- replace_contraction(x) # eg. "isn't" becomes "is not"
+  x <- replace_ordinal(x) # eg. "1st" becomes "first"
+  x <- tolower(x) # eg. "Mine" becomes "mine"
+  x <- replace_symbol(x) # eg. "$" becomes "dollar"
+  return(x)
+}
+
+qdap_clean_part_b <- function(x) {
+  x <- replace_abbreviation(x) # eg. "Mr." becomes "Mister"
+  x <- replace_contraction(x) # eg. "isn't" becomes "is not"
+  x <- replace_ordinal(x) # eg. "1st" becomes "first"
+  return(x)
+}
+
+# TicToc recorded (for 1,000 rows of data): 13.176 sec elapsed
+# TicToc recorded (for 10,000 rows of data): 133.35 sec elapsed
+tic()
+fivecore_selected_a$text <- qdap_clean_part_a(fivecore_selected_a$text)
+fivecore_selected_b$text <- qdap_clean_part_b(fivecore_selected_b$text)
+toc()
+
+contrap_pattern <- c("i'm","you're","he's","she's","it's", "we're", "they're","i've","you've","we've","they've","i'd","you'd","he'd","she'd","we'd","they'd","i'll","you'll","he'll","she'll","we'll","they'll","isn't","aren't","wasn't","weren't","hasn't","haven't","hadn't","doesn't","don't","didn't","won't","wouldn't","shan't","shouldn't","can't","couldn't","mustn't","let's","that's","who's","what's","here's","there's","when's","where's","why's","how's","perfectly","recommended")
+
+replacement_pattern <- c("I am","you are","he is" ,"she is" ,"it is","we are" , "they are", "I have","you have","we have", "they have","I would","you would","he would",  "she would","we would","they would", "I will","you will","he will", "she will" ,"we will","they will","is not","are not","was not","were not","has not" , "have not","had not","does not","do not", "did not" ,"will not","would not", "shall not","should not","can not","could not","must not","let us","that is", "who is","what is","here is", "there is","when is","where is","why is","how is","perfect","recommend")
+
+# To carefully replace category slangs 
+# fivecore_selected_a$text  <- replace_abbreviation(fivecore_selected_a$text,"ds","direct sound")
+# fivecore_selected_b$text  <- replace_abbreviation(fivecore_selected_b$text,"ds","direct sound")
+
+fivecore_selected_a$text <- qdap::mgsub(pattern = contrap_pattern, replacement = replacement_pattern, fivecore_selected_a$text)
+
+fivecore_selected_b$text <- qdap::mgsub(pattern = contrap_pattern, replacement = replacement_pattern, fivecore_selected_b$text)
+```
+
+## Converting dataframe into VCorpus
+```{r, warning=FALSE}
+# To convert dataframe into standard VCorpus format of "doc_id", "text" etc.
+df_source_a <- DataframeSource(fivecore_selected_a)
+df_corpus_a <- VCorpus(df_source_a)
+
+df_source_b <- DataframeSource(fivecore_selected_b)
+df_corpus_b <- VCorpus(df_source_b)
+
+# To examine df_corpus
+df_corpus_a
+df_corpus_b
+
+# To examine df_corpus metadata
+meta(df_corpus_a[1])
+meta(df_corpus_b[1])
+```
+
+## Cleaning VCorpus with tm package
+```{r, warning=FALSE}
+# To list standard English stop words (total of 1358 stop words)
+stopwords("english")
+stopwords.default<- stopwords("english")
+
+# To exclude stopwords which may be important
+stopWordsNotDeleted<- c("off")
+stopWordsUpdated <- stopwords.default[! stopwords.default %in% stopWordsNotDeleted] ## new Stopwords list
+
+# To create a function to clean VCorpus data
+tm_clean_a <- function(corpus) {
+  corpus <- tm_map(corpus, removePunctuation) # Remove punctuation (eg. remove "." to "")
+  corpus <- tm_map(corpus, removeNumbers )# Remove numbers (eg. remove "1" to "")
+  corpus <- tm_map(corpus, removeWords, # Remove english common and custom stopwords 
+                 c(stopWordsUpdated , "hi", "hello", "amazon", "one", "two",
+                   "three", "four", "five", "six", "seven",
+                   "eight", "nine", "ten", "really", "will",
+                   "just", "a","b","c","d","e","f","g","h","i",
+                   "j","k","l","m","n","o","p","q","r","s","t",
+                   "u","v","w","x","y","z","youll")) # Add custom stopwords
+  corpus <- tm_map(corpus, stripWhitespace) # Eliminate extra white spaces
+  return(corpus)
+}
+
+tm_clean_b <- function(corpus) {
+  corpus <- tm_map(corpus, removeNumbers )# Remove numbers (eg. remove "1" to "")
+  corpus <- tm_map(corpus, stripWhitespace) # Eliminate extra white spaces
+  return(corpus)
+}
+
+cleaned_df_corpus_a <- tm_clean_a(df_corpus_a)
+cleaned_df_corpus_b <- tm_clean_b(df_corpus_b)
+
+# To examine original "review" of document k
+#fivecore_reordered$reviewText[7481]
+
+# To examine cleaned "text" (converted from review) of document k
+#cleaned_df_corpus_a[[447]]$content
+#cleaned_df_corpus_b[[447]]$content
+
+# To examine df_corpus metadata of first ten document
+#meta(cleaned_df_corpus_a[1:10])
+#meta(cleaned_df_corpus_b[1:10])
+```
+
+## Generating corpus into tidy dataframe
+```{r, warning=FALSE}
+# To generate tidy dataframe
+tidy_a <- data.frame(cleaned_df_corpus_a)
+tidy_b <- data.frame(cleaned_df_corpus_b)
+```
+
+## Lemmatization of tidy dataframe
+```{r, warning=FALSE, message=FALSE, results='hide'}
+# To download the model for the english language 
+langmodel_download <- udpipe::udpipe_download_model("english")
+
+# To load english language model
+langmodel <- udpipe::udpipe_load_model(langmodel_download$file_model)
+
+# Setup the annotation process using the `udpipe_annotate` function
+# TicToc recorded (for 1,000 rows of data): 16.041 sec elapsed
+# TicToc recorded (for 10,000 rows of data): 193.755 sec elapsed
+tic()
+postagged_a <- udpipe_annotate(langmodel,
+                             tidy_a$text,
+                             parallel.cores = 8, 
+                             trace = 100)
+toc()
+
+# TicToc recorded (for 1,000 rows of data): 33.061 sec elapsed
+# TicToc recorded (for 10,000 rows of data): 342.454 sec elapsed
+tic()
+postagged_b <- udpipe_annotate(langmodel,
+                             tidy_b$text,
+                             parallel.cores = 8, 
+                             trace = 100)
+toc()
+
+
+# To cast output to a dataframe and review it
+postagged_a <- as.data.frame(postagged_a)
+postagged_b <- as.data.frame(postagged_b)
+
+# To filter and detokenize the postagged terms
+lemmatized <- postagged_a %>% filter(upos %in% c("NOUN",
+                                              "ADJ",
+                                              "ADV")) %>% 
+  select(doc_id,lemma) %>% group_by(doc_id) %>% 
+  summarise(documents_pos_tagged = paste(lemma,collapse = " "))
+
+# To join lematized sentence with tidy_a data
+tidy_a <- tidy_a %>% 
+  left_join(lemmatized, by = c("doc_id"="doc_id"))
+
+# To rename columns
+tidy_a <- tidy_a %>% 
+  rename(text_lemmatized = documents_pos_tagged)
+
+# To rearrange columns in the dataframe to standard "doc_id", "text" etc format
+col_order_other <- c("doc_id","text", "text_lemmatized", "ratings",
+               "helpfulness", "summary", "review_time", "asin")
+tidy_a <- tidy_a[, col_order_other]
+
+# To change the format of review_time to "1970-01-01"
+tidy_a$review_time <- as.Date(as.POSIXct(tidy_a$review_time,origin="1970-01-01"))
+tidy_b$review_time <- as.Date(as.POSIXct(tidy_b$review_time,origin="1970-01-01"))
+
+# To remove NA values
+tidy_a<-tidy_a[-which(is.na(tidy_a$text_lemmatized)),]
+```
+
+# Analysis Stage
+## Visualisation of dominant words per star rating category
+```{r, warning=FALSE}
+# To group tokens by ratings and words
+unnested_reviews <- tidy_a %>%
+  unnest_tokens(word,text) %>%
+  count(ratings, word, sort=TRUE) %>%
+  ungroup() %>%
+  rename(count=n) %>%
+  filter(count>5)
+
+# To calculate TF-IDF using the `bind_tf_idf`() function
+reviews_tf_idf <- unnested_reviews %>% 
+  bind_tf_idf(word,ratings,count)
+
+# To create a plot of words with the top 10 TF-IDF scores by review ratings
+reviews_tf_idf %>%
+  group_by(ratings) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, reorder_within(word, tf_idf, ratings),
+             fill = ratings)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_reordered() + 
+  facet_wrap(~ratings, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL) + ggtitle("Most Dominant Words By Category Ratings")
+
+# To produce wordcloud of top 50 words
+word_cloud_1 <- reviews_tf_idf %>%
+  filter(ratings=="1")
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "1 Star Ratings")
+wordcloud(words=word_cloud_1$word,
+          freq=word_cloud_1$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+
+word_cloud_2 <- reviews_tf_idf %>%
+  filter(ratings=="2")
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "2 Stars Ratings")
+wordcloud(words=word_cloud_2$word,
+          freq=word_cloud_2$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+
+word_cloud_3 <- reviews_tf_idf %>%
+  filter(ratings=="3")
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "3 Stars Ratings")
+wordcloud(words=word_cloud_3$word,
+          freq=word_cloud_3$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+
+word_cloud_4 <- reviews_tf_idf %>%
+  filter(ratings=="4")
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "4 Stars Ratings")
+wordcloud(words=word_cloud_4$word,
+          freq=word_cloud_4$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+
+word_cloud_5 <- reviews_tf_idf %>%
+  filter(ratings=="5")
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "5 Stars Ratings")
+wordcloud(words=word_cloud_5$word,
+          freq=word_cloud_5$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+```
+
+## Visualisation of most common word combinations used per star rating category
+```{r, warning=FALSE}
+# To create a n-gram where n=2 (aka bigram)
+tidy_a %>% 
+  unnest_tokens(word,text,token="ngrams",n=2) %>% 
+  na.omit() %>% 
+  count(ratings,word,sort=TRUE) %>% 
+  bind_tf_idf(word,ratings,n) %>% 
+  arrange(desc(tf_idf)) -> bigram_tf_idf 
+
+# To create a plot of bigram words with the highest tf scores by ratings
+bigram_tf_idf %>% 
+  group_by(ratings) %>% 
+  slice_max(tf,n=10) %>% 
+  ungroup() %>% 
+  ggplot(aes(tf, reorder_within(word, tf,ratings), fill = ratings)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_reordered() + 
+  facet_wrap(~ratings, ncol = 2, scales = "free") +
+  labs(x = "tf", y = NULL) + ggtitle("Most Common Word Combinations (Bigram) By Category Ratings")
+```
+
+## Features Observed which are Related to Rating Score
+### Text Related Features
+```{r, warning=FALSE, message=FALSE}
+### Text-Related ###
+## Feature 1: Length of reviews ## 
+feature_observed <- tidy_b %>%
+  mutate(text_f1_reviewlength = sapply(strsplit(as.vector(text), " "), length))
+
+## Feature 2: Count of nouns ##
+noun_count <- postagged_b %>%
+  filter(upos=="NOUN") %>%
+  select(doc_id,token) 
+  
+# To lower all characters 
+noun_count$token <- tolower(noun_count$token)
+
+# To create a new metadata df
+metadata_brand <- metadata
+
+# To remove empty cells ""
+metadata_brand <- metadata_brand[-which(metadata_brand$brand == ""), ]
+
+# To select top 1000 brands
+top1000_brands <- metadata_brand %>%
+  na.omit() %>%
+  count(brand) %>%
+  arrange(desc(n)) %>%
+  top_n(1000)
+
+# To remove special characters from top 1000 brands list
+x <- "a1~!@#$%^&*(){}_+:\"<>?,./;'[]-="
+top1000_brands$brand <- str_replace_all(top1000_brands$brand, "[[:punct:]]", " ")
+
+# To lower all characters in top 1000 brands list
+top1000_brands$brand <- tolower(top1000_brands$brand)
+
+# To trim white spaces in top 1000 brands list
+top1000_brands$brand <- trimws(top1000_brands$brand)
+
+# To filter "Nouns" to brands which exist in the "Brands" column
+# Note: Nouns originally had many irrelevant nouns hence this step is required
+noun_count <- noun_count[noun_count$token %in% top1000_brands$brand, ]
+
+# To count number of nouns present in the reviews
+noun_count <- noun_count %>%
+  group_by(doc_id) %>%
+  count(token) %>%
+  group_by(doc_id) %>%
+  summarise(text_f2_nouncount = sum(n))
+
+# To join 
+feature_observed <- feature_observed %>% 
+  left_join(noun_count, by=c("doc_id"="doc_id"))
+
+## Feature 3: Count of verbs ##
+verb_count <- postagged_b %>%
+  filter(upos=="VERB") %>%
+  select(doc_id,token) %>%
+  group_by(doc_id) %>%
+  count(token) %>%
+  group_by(doc_id) %>%
+  summarise(text_f3_verbcount = sum(n))
+
+# To join 
+feature_observed <- feature_observed %>% 
+  left_join(verb_count, by=c("doc_id"="doc_id"))
+
+## Feature 4: Count of interjections ##
+intj_count <- postagged_b %>%
+  filter(upos=="INTJ") %>%
+  select(doc_id,token) %>%
+  group_by(doc_id) %>%
+  count(token) %>%
+  group_by(doc_id) %>%
+  summarise(text_f4_intjcount = sum(n))
+
+# To join 
+feature_observed <- feature_observed %>% 
+  left_join(intj_count, by=c("doc_id"="doc_id"))
+
+## Feature 5: Count of exclamation ##
+feature_observed$text_f5_exclaimcount <- str_count(feature_observed$text, '!')
+
+## Feature 6: Score on readability of sentence ##
+tidy_sample <- tidy_b
+read_listing <- qdap::flesch_kincaid(tidy_sample$text,tidy_sample$doc_id)
+read_listing$Readability %>% select(doc_id,FK_grd.lvl ) -> to_join
+tidy_sample %>% left_join(to_join) %>% rename(text_f6_readability = FK_grd.lvl) -> tidy_sample 
+
+# To join feature 6 to feature_observed df
+tidy_sample_join <- tidy_sample %>%
+  select(doc_id, text_f6_readability)
+
+feature_observed <- feature_observed %>%
+  left_join(tidy_sample_join, by=c("doc_id"="doc_id"))
+
+text_f1 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Review Length VS Ratings",
+       x="Review Length", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=text_f1_reviewlength, y=ratings, color=ratings, fill=ratings))
+
+text_f2 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Noun Count VS Ratings",
+       x="Noun Count", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=text_f2_nouncount, y=ratings, color=ratings, fill=ratings),na.rm=TRUE)
+
+text_f3 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Verb Count VS Ratings",
+       x="Verb Count", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=text_f3_verbcount, y=ratings, color=ratings, fill=ratings),na.rm=TRUE)
+
+text_f4 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Interjection Count VS Ratings",
+       x="Interjection Count", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=text_f4_intjcount, y=ratings, color=ratings, fill=ratings),na.rm=TRUE)
+
+text_f5 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Exclamation Count VS Ratings",
+       x="Exclamation Count", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=text_f5_exclaimcount, y=ratings,color=ratings, fill=ratings),na.rm=TRUE)
+
+text_f6 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Readability Score VS Ratings",
+       x="Readability Score", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=text_f6_readability, y=ratings,color=ratings, fill=ratings),na.rm=TRUE)
+
+grid.arrange(text_f1,text_f2,text_f3,text_f4,
+             text_f5,text_f6,ncol=2)  
+```
+
+### Non-Text Related Features
+```{r, warning=FALSE}
+### Non-Text-Related ###
+## Feature 1: Price ##
+metadata_price <- metadata %>%
+  select(asin,price)
+
+feature_observed <- feature_observed %>% 
+  left_join(metadata_price, by=c("asin"="asin")) %>%
+  rename(nontext_f1_price=price)
+
+## Feature 2: Sales Rank ##
+# To unnest salesRank column
+metadata_salesrank <- unnest(metadata, salesRank)
+
+# To rename "Musical Instruments" to "sales_rank_musical"
+names(metadata_salesrank)[names(metadata_salesrank) == "Musical Instruments"] <- "salesrank"
+
+# To select relevant columns only
+metadata_salesrank <- metadata_salesrank %>%
+  select(asin,salesrank)
+
+# To join
+feature_observed <- feature_observed %>% 
+  left_join(metadata_salesrank, by=c("asin"="asin")) %>%
+  rename(nontext_f2_salesrank=salesrank)
+
+## Feature 3: Number of categories listed ##
+# To count number of categories the product review is listed in
+metadata_cat <- metadata
+metadata_cat$cat_count <- str_count(metadata$categories,",")
+
+# To create a column with values of "1"
+add_one <- data.frame(rep(c("1"),times=NROW((metadata_cat))))
+
+# To rename column to "add_one"
+names(add_one)[names(add_one) == colnames(add_one)] <- "add_one"
+
+# To bind the columns
+metadata_cat <- cbind(metadata_cat,add_one)
+
+# To convert string to integer
+metadata_cat$add_one <- as.integer(metadata_cat$add_one)
+
+# To create new column called "category_count"
+metadata_cat <- metadata_cat %>%
+  mutate(nontext_f3_categorycount = add_one+cat_count)
+
+# To choosing relevant columns only
+metadata_cat <- metadata_cat %>%
+  select(asin,nontext_f3_categorycount)
+
+# To join
+feature_observed <- feature_observed %>% 
+  left_join(metadata_cat, by=c("asin"="asin"))
+
+## Feature 4: Count of helpful votes for reviews ##
+
+# Note: Amazon dataset from 2014 had upvote and downvote on reviews. 
+# Note: Since 2018, downvote function had been removed. 
+# Standardising "helpfulness" column into ":" format
+feature_observed$helpfulness <- sub("c", "", feature_observed$helpfulness)
+feature_observed$helpfulness <- sub(", ", ":", feature_observed$helpfulness)
+feature_observed$helpfulness <- sub("\\(", "", feature_observed$helpfulness)
+feature_observed$helpfulness  <- sub(")", "", feature_observed$helpfulness)
+
+# To separate helpfulness column into "positive_helpful" and "total_helpful"
+feature_observed <- feature_observed %>%
+  tidyr::separate(helpfulness,c("positive_helpful","total_helpful"), sep=":") 
+# To convert "positive_helpful" and "total_helpful" into integer
+feature_observed$positive_helpful <- as.integer(feature_observed$positive_helpful)
+feature_observed$total_helpful <- as.integer(feature_observed$total_helpful)
+
+# To count number of helpful votes
+helpful_count <- feature_observed %>%
+  select(doc_id,positive_helpful) %>%
+  rename(nontext_f4_helpfulcount = positive_helpful)
+
+# To join 
+feature_observed <- feature_observed %>% 
+  left_join(helpful_count, by=c("doc_id"="doc_id"))
+
+nontext_f1 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Price VS Ratings",
+       x="Price", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=nontext_f1_price, y=ratings,color=ratings, fill=ratings),na.rm=TRUE)
+
+nontext_f2 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Sales Rank VS Ratings",
+       x="Sales Rank", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=nontext_f2_salesrank, y=ratings,color=ratings, fill=ratings),na.rm=TRUE)
+
+nontext_f3 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Category Count VS Ratings",
+       x="Category Count", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=nontext_f3_categorycount, y=ratings,color=ratings, fill=ratings),na.rm=TRUE)
+
+nontext_f4 <- ggplot(feature_observed) + 
+  labs(title="Relationship Of Helpful Count VS Ratings",
+       x="Helpful Count", y="Ratings") +
+  theme(plot.title = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        axis.title.y = element_text(size=8),
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        strip.text.x = element_text(size=12),
+        strip.text.y = element_text(size=12),
+        legend.title = element_blank(),
+        legend.text = element_text(size=12)) +
+  geom_point(position="jitter", shape=16, alpha=0.4, size=3,
+             aes(x=nontext_f4_helpfulcount, y=ratings,color=ratings, fill=ratings),na.rm=TRUE)
+
+grid.arrange(nontext_f1,nontext_f2,nontext_f3, nontext_f4)
+```
+
+## Handling Spelling Mistakes, Negations, and Other Text Modifiers
+```{r, warning=FALSE}
+### Handling Internet Slang ###
+
+# To change internet slang to proper english sentences
+tidy_b$text <- replace_internet_slang(tidy_b$text)
+
+### Handling Symbols ###
+
+# To view top 30 most frequent symbols used 
+symbol_count <- postagged_b %>%
+  filter(upos=="SYM") %>%
+  select(token) %>%
+  count(token) %>%
+  arrange(desc(n)) %>%
+  top_n(30)
+
+# To only identify relevant symbols
+symbol_count <- symbol_count[!symbol_count$token %in% c("$","%","+","x","#","-","=","$$",
+                                                        ":.",".+","|","hi-",":+","~","~$",
+                                                        "-nx","/","tortex","ymmv.","???",
+                                                        "@","+++","mic.","mix","q-"), ]
+
+# To maintain only relevant symbols
+symbol_count <- symbol_count %>%
+  top_n(6)
+
+# To attach sentiment to relevant symbols
+symbol_count$sentiment <- c("happy","happy","happy","sad","happy","happy")
+
+# To replace symbols with sentiments in tidy data
+tidy_b$text <- replace_abbreviation(tidy_b$text,symbol_count$token,symbol_count$sentiment)
+
+### Handling Spelling Mistakes ###
+
+# To check for spelling errors (excluding stopwords)
+check_text <- tidy_a$text
+check_process <- check_spelling(check_text, assume.first.correct=FALSE)
+
+# To exclude top 3,000 dominant words from spelling correction
+top_words <- tidy_a %>%
+  unnest_tokens(word,text) %>%
+  count(word, sort=TRUE) %>%
+  ungroup() %>%
+  arrange(desc(n)) %>%
+  top_n(3000)
+
+check_process <- check_process[!check_process$not.found %in% top_words$word, ]
+
+# To count top misspelled words (excluding dominant words and stopwords)
+top_misspelled <- tidy_b %>%
+  unnest_tokens(word,text) %>%   
+  count(word, sort=TRUE) %>%
+  ungroup() %>%
+  arrange(desc(n))
+
+top_misspelled$misspelled <- top_misspelled$word %in% check_process$not.found
+top_misspelled$dominant <- top_misspelled$word %in% top_words$word
+
+# To filter words misspelled two to four times
+top_misspelled <- top_misspelled %>% 
+  filter(misspelled=="TRUE", dominant=="FALSE", n>2 & n<6)
+
+# To carefully select misspelled words to have spelling correction 
+check_process <- check_process[check_process$not.found %in% top_misspelled$word, ]
+
+# To count number of alphabets
+check_process$strcount <- str_count(check_process$not.found)
+
+# To filter characters more than 7 for replacement
+check_process_filtered <- check_process %>%
+  filter(strcount>7)
+
+# To replace misspelled words with suggested words in tidy data
+tidy_b$text <- replace_abbreviation(tidy_b$text,check_process_filtered$not.found,check_process_filtered$suggestion)
+```
+
+## Overview of Polarity on Rating Scores
+```{r, warning=FALSE}
+# To create dataframe for polarity analysis
+polarity_by_ratings_df <- tidy_b[, c("ratings", "text")]
+
+# To calculate polarity score by ratings
+polarity_by_ratings <- polarity(
+  text.var       = polarity_by_ratings_df$text,
+  grouping.var   = polarity_by_ratings_df$ratings,
+  polarity.frame = key.pol,
+  negators       = negation.words,
+  amplifiers     = amplification.words,
+  deamplifiers   = deamplification.words
+)
+```
+
+```{r, warning=FALSE}
+# To plot the conversation polarity
+plot(polarity_by_ratings)
+```
+
+## Normalization of Sentiment Scores across Bing, Loughran and NRC
+```{r, warning=FALSE}
+# To loading loughran, bing and nrc dictionaries
+lough_dictionary <- tidytext::get_sentiments("loughran")
+bing_dictionary <- tidytext::get_sentiments("bing")
+nrc_dictionary <- tidytext::get_sentiments("nrc")
+
+# To tokenise "text" column
+tidy_token <- tidy_a %>%
+  unnest_tokens(word,text)
+
+# To count tokens at doc_id and ratings level
+tidy_token_counts <- tidy_token %>%
+  count(doc_id, word, ratings, sort=TRUE) %>%
+  ungroup() %>%
+  rename(count=n)
+
+# Loughran Dictionary
+lough_result <- tidy_token %>% 
+  inner_join(lough_dictionary) %>% 
+  count(ratings, sentiment) %>% 
+  pivot_wider(names_from = sentiment,values_from = n) %>% 
+  mutate(sentiment = (positive - negative)/(positive+negative)) %>%
+  mutate(dictionary = "loughran")
+
+# Bing Dictionary
+bing_result <- tidy_token %>% 
+  # Append the bing sentiment dictionary
+  inner_join(get_sentiments("bing")) %>% 
+  # Count by ratings and sentiment
+  count(ratings, sentiment) %>% 
+  # Transform to pivot wider
+  pivot_wider(names_from = sentiment,values_from = n) %>% 
+  # Calculate sentiment
+  mutate(sentiment = (positive-negative)/(positive+negative)) %>% 
+  # Tag "bing" dictionary in new column
+  mutate(dictionary="bing")
+
+# NRC Dictionary
+nrc_result <- tidy_token %>% 
+  inner_join(nrc_dictionary) %>% 
+  count(ratings, sentiment) %>% 
+  pivot_wider(names_from = sentiment,values_from = n) %>% 
+  mutate(sentiment = (positive - negative)/(positive+negative)) %>%
+  mutate(dictionary = "nrc")
+
+# To bind lough, bing, and nrc results together
+all_results <- bing_result %>% 
+  bind_rows(lough_result, nrc_result)
+```
+
+```{r, warning=FALSE}
+# To plot sentiment results from loughran and bing and nrc dictionaries
+ggplot(all_results, aes(x=ratings,y=sentiment,fill=dictionary)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~dictionary,ncol=1,scales="free_y")
+```
+
+```{r, warning=FALSE}
+# Loughran Dictionary
+lough_ig <- tidy_token %>% 
+  inner_join(lough_dictionary) %>% 
+  count(doc_id, sentiment) %>% 
+  pivot_wider(names_from = sentiment,values_from = n) %>% 
+  mutate(lough_sentiment = (positive - negative)/(positive+negative)) %>%
+  select(doc_id,lough_sentiment)
+
+# Bing Dictionary
+bing_ig <- tidy_token %>% 
+  # Append the bing sentiment dictionary
+  inner_join(get_sentiments("bing")) %>% 
+  # Count by ratings and sentiment
+  count(doc_id, sentiment) %>% 
+  # Transform to pivot wider
+  pivot_wider(names_from = sentiment,values_from = n) %>% 
+  # Calculate sentiment
+  mutate(bing_sentiment = (positive-negative)/(positive+negative)) %>%
+  select(doc_id,bing_sentiment)
+
+# NRC Dictionary
+nrc_ig <- tidy_token %>% 
+  inner_join(nrc_dictionary) %>% 
+  count(doc_id, sentiment) %>% 
+  pivot_wider(names_from = sentiment,values_from = n) %>% 
+  mutate(nrc_sentiment = (positive - negative)/(positive+negative)) %>%
+  select(doc_id,nrc_sentiment)
+
+all_ig <- tidy_a %>%
+  select(doc_id,ratings) %>%
+  left_join(lough_ig,by=c("doc_id"="doc_id")) %>%
+  left_join(bing_ig,by=c("doc_id"="doc_id")) %>%
+  left_join(nrc_ig,by=c("doc_id"="doc_id"))
+  
+# To calculate the information gain of each dictionary in predicting ratings
+all_ig_output <- information.gain(ratings~., all_ig)
+all_ig_output <- all_ig_output %>%
+  slice(-1)
+
+# To rename column and transpose df
+display_ig <- all_ig_output %>%
+  rename("Information Gain" = attr_importance)
+display_ig <-as.data.frame(t(display_ig))
+```
+
+```{r, warning = FALSE}
+# To display information gain in a simple table
+display_ig  %>%
+    knitr::kable(caption= "Evaluation of the Dictionary using Information Gain",
+               digits=4,
+               align="ccc", 
+               col.names = c("Loughran Dict.",
+                             "Bing Dict.",
+                             "NRC Dict."))
+```
+
+```{r, warning=FALSE}
+### Unnormalised Sentiment for Bing Dictionary ###
+tidy_b$bing <- sentiment_by(get_sentences(tidy_b$text), polarity_dt = lexicon::hash_sentiment_huliu)
+```
+
+## Normalization of Sentiment Scores by Dictionary Coverage
+```{r, warning=FALSE}
+# To count number of words per review
+tidy_b$total_tokens_per_doc <- tidy_b$bing$word_count
+total_words_per_doc <- tidy_b %>%
+  select(doc_id, total_tokens_per_doc)
+
+# To join tokens with afinn, bing and nrc dictionaries
+dictionary_coverage <- tidy_token %>%
+  select(doc_id,word) %>%
+  left_join(bing_dictionary, by = c("word" = "word")) 
+
+# To tag "1" when sentiment from dictionary is used. To tag "0" otherwise.
+dictionary_coverage$sentiment <- ifelse(grepl("positive|negative", dictionary_coverage$sentiment),1,0)
+  
+# To rename columns
+dictionary_coverage <- dictionary_coverage %>% 
+  rename(bing_covered = sentiment)
+
+# To calculate bing dictionary coverage
+bing_coverage <- dictionary_coverage %>%
+  select(doc_id, bing_covered) %>%
+  group_by(doc_id) %>%
+  summarise(bing_sentiment=sum(bing_covered))
+
+# To join bing coverage df with total tokens per doc df
+bing_coverage <- bing_coverage %>% 
+  left_join(total_words_per_doc, by = c("doc_id"="doc_id"))
+bing_coverage <- bing_coverage %>%
+  mutate(bing_coverage=round(bing_sentiment/total_tokens_per_doc,4))
+
+# To select only dictionary coverage 
+bing_coverage <- bing_coverage %>%
+  select(doc_id, bing_coverage)
+
+# To join dictionary coverage to tidy data
+tidy_b <- tidy_b %>%
+  left_join(bing_coverage, by=c("doc_id"="doc_id")) 
+
+# To calculate adjusted average sentiment score by dictionary coverage
+tidy_b <- tidy_b %>%
+  mutate(adj_bing_sentiment = round(tidy_b$bing$ave_sentiment/tidy_b$bing_coverage,4))
+
+# To turn NaN, NA and Inf values to 0
+tidy_b$adj_bing_sentiment[which(!is.finite(tidy_b$adj_bing_sentiment))] <- 0
+
+# To drop irrelevant bing column
+tidy_b <- subset(tidy_b, select=-c(bing))
+```
+
+# Prediction of Rating Scores using Ordinal Logistic Regression Model
+```{r, warning=FALSE}
+# To filter out only reviews with adj_bing_sentiment
+tidy_model <- tidy_b %>% 
+  filter(!is.na(adj_bing_sentiment))
+
+# To convert ratings to factors
+tidy_model$ratings <- as.factor(tidy_model$ratings)
+
+# To select only relevant features for model
+feature_observed_model <- feature_observed %>%
+  dplyr::select(doc_id, text_f1_reviewlength, text_f2_nouncount, text_f3_verbcount, text_f4_intjcount, text_f5_exclaimcount, text_f6_readability, nontext_f1_price, nontext_f2_salesrank, nontext_f3_categorycount, nontext_f4_helpfulcount)
+
+# To convert missing values to 0 for the model
+feature_observed_model$text_f1_reviewlength[!is.finite(feature_observed_model$text_f1_reviewlength)] <- 0
+feature_observed_model$text_f2_nouncount[!is.finite(feature_observed_model$text_f2_nouncount)] <- 0
+feature_observed_model$text_f3_verbcount[!is.finite(feature_observed_model$text_f3_verbcount)] <- 0
+feature_observed_model$text_f4_intjcount[!is.finite(feature_observed_model$text_f4_intjcount)] <- 0
+feature_observed_model$text_f5_exclaimcount[!is.finite(feature_observed_model$text_f5_exclaimcount)] <- 0
+feature_observed_model$text_f6_readability[!is.finite(feature_observed_model$text_f6_readability)] <- 0
+
+# To remove nontext features with NA values
+feature_observed_model <- na.omit(feature_observed_model)
+
+# To join 
+tidy_model <- tidy_model %>%
+  left_join(feature_observed_model, by=c("doc_id"="doc_id"))
+
+# To remove NA values from tidy model
+tidy_model <- na.omit(tidy_model)
+
+# Check the proportion in each class
+prop.table(table(tidy_model$ratings))
+
+# To convert ratings to numeric for oversampling
+tidy_model$ratings <- as.numeric(tidy_model$ratings)
+
+# To categorise ratings into high and low ratings
+tidy_model_2 <- tidy_model %>% 
+  select(-c(doc_id, text, asin, helpfulness, summary, review_time, total_tokens_per_doc, bing_coverage)) %>% 
+  mutate(level=ifelse(ratings>3, "high", "low")) 
+
+# To convert level to factor
+tidy_model_2$level <- as.factor(tidy_model_2$level)
+
+# To apply oversampling technique
+oversample_data <- ovun.sample(level ~. ,
+                               data = tidy_model_2,
+                               method = "over",
+                               seed=1,
+                               p= 0.5)$data
+
+# To convert ratings to numeric
+oversample_data$ratings <- as.factor(oversample_data$ratings)
+
+# To check proportion of ratings after oversampling
+prop.table(table(oversample_data$ratings))
+
+# Checking assumptions for Ordinal Logistic Regression Model
+
+# Assumption 1: The dependent variable are ordered.
+# Assumption 2: One or more of the independent variables are either continuous, categorical or ordinal.
+
+# To convert values to numeric
+oversample_data$nontext_f2_salesrank <- as.numeric(oversample_data$nontext_f2_salesrank)
+
+oversample_data$nontext_f3_categorycount<- as.numeric(oversample_data$nontext_f3_categorycount)
+
+oversample_data$nontext_f4_helpfulcount<- as.numeric(oversample_data$nontext_f4_helpfulcount)
+
+# To convert ratings back to factor
+oversample_data$ratings <- as.factor(oversample_data$ratings)
+
+# To create an ordinal logistic regression model reference
+m_ref <- polr(ratings ~ adj_bing_sentiment, data = oversample_data, Hess=TRUE)
+
+# To build a model with text features
+m_text <- polr(ratings ~ adj_bing_sentiment + text_f3_verbcount + text_f4_intjcount+ text_f5_exclaimcount + text_f2_nouncount, data = oversample_data, Hess=TRUE)
+
+# To build a model with nontext features
+m_nontext <- polr(ratings~ adj_bing_sentiment + nontext_f3_categorycount + nontext_f4_helpfulcount, data = oversample_data, Hess=TRUE)
+
+# To knit the report using stargazer
+stargazer::stargazer(m_ref, m_text, m_nontext, type = "text", add.lines= list(c("Nagelkerke", round(PseudoR2(m_ref, which = c("Nagelkerke")),4), round(PseudoR2(m_text, which = c("Nagelkerke")),4), round(PseudoR2(m_nontext, which = c("Nagelkerke")),4) )
+                                                                              ))
+```
+
+# Segregation of Reviews into Topic Models
+```{r, warning=FALSE}
+# To remove helpfulness from tidy_a
+tidy_a_stm <- tidy_a %>% dplyr::select(-helpfulness)
+
+# To remove customized stop words and perform other basic text cleaning
+processed <- textProcessor(tidy_a_stm$text_lemmatized,
+                           metadata = tidy_a_stm,
+                           customstopwords = c("last", "time", "much", "less", "even", "right", "use", "also", "well", "back", "great", "price", "product", "problem", "never", "first", "issue", "easy", "good", "buy", "love", "number", "nice", "think", "new", "enough", "year", "better", "thing", "best", "day", "different", "regular", "effect", "perfect", "way", "still", "highly", "job", "model", "amazing", "always", "actually", "true", "however", "dollar", "end", "bit", "spend", "unit", "home"),
+                           stem = F)
+
+# To check if any document is removed
+processed$docs.removed
+
+# To keep those words who appear more than 1% in the document corpus
+threshold <- round(1/100 * length(processed$documents),0)
+
+# To form the dataset used for topic modelling 
+out <- prepDocuments(processed$documents,
+                     processed$vocab,
+                     processed$meta,
+                     lower.thresh = threshold)
+
+# To check if any document is removed
+out$docs.removed
+
+# To find the optimal number of topics
+# To achieve **heuristic** search for the *K* parameter using the `searchK` function.
+#This requires a range for the K values to be evaluated to be supplied as a vector.
+
+# To set a seed
+set.seed(16222527)
+
+# To search the optimum k for topic modelling
+numtopics <- searchK(out$documents,out$vocab,K=seq(from=5, to=11,by=1)) # k=10
+numtopics$results
+```
+
+```{r, warning=FALSE}
+# To plot the number of topics
+plot(numtopics)
+```
+
+```{r, warning=FALSE}
+# To execute the model with k=10
+tidyfit <- stm(documents = out$documents,
+                   vocab = out$vocab,
+                   K = 10,
+                   prevalence =~ ratings,
+                   max.em.its = 75, 
+                   data = out$meta,
+                   reportevery=10,
+                   # gamma.prior = "L1",
+                   sigma.prior = 0.7,
+                   init.type = "LDA")
+
+# To get a summary of the topics accross the corpus and inspect the words
+topic_summary <- summary(tidyfit)
+
+# Topic labels
+# Topic 1 Bass Guitars
+# Topic 2 PA & Stage
+# Topic 3 Acoustic Guitars
+# Topic 4 Guitar Strings
+# Topic 5 Microphone
+# Topic 6 Electrical Cables
+# Topic 7 Guitar Accessories
+# Topic 8 Musical Tuners
+# Topic 9 Audio
+# Topic 10 Cases & Stands
+```
+
+```{r, warning=FALSE}
+# To plot the stm object to see the percentage ot the topics in the corpus
+plot(tidyfit)
+```
+
+```{r, warning=FALSE}
+# To plot the barplot
+tidyfit_topics<-tidy(tidyfit,matrix="beta")
+
+# To get the top 10 terms:
+tidyfit_terms<-tidyfit_topics %>%
+  group_by(topic) %>%
+  slice_max(beta,n=10) %>%
+  ungroup() %>%
+  arrange(topic,desc(beta))
+
+tidyfit_terms
+
+# topic labelling
+topic_labels <- c("Bass Guitars", "PA & Stage",
+                  "Acoustic Guitars","Guitar Strings",
+                  "Microphone","Electrical Cables",
+                  "Guitar Accessories","Musical Tuners",
+                  "Audio", "Cases & Stands")
+
+# Create a column to name the topics.
+tidyfit_terms <- tidyfit_terms %>%
+ mutate(topic_label = case_when((topic == 1) ~ topic_labels[1],
+                                (topic == 2) ~ topic_labels[2],
+                                (topic == 3) ~ topic_labels[3],
+                                (topic == 4) ~ topic_labels[4],
+                                (topic == 5) ~ topic_labels[5],
+                                (topic == 6) ~ topic_labels[6],
+                                (topic == 7) ~ topic_labels[7],
+                                (topic == 8) ~ topic_labels[8],
+                                (topic == 9) ~ topic_labels[9],
+                                (topic == 10) ~ topic_labels[10]))
+```
+
+```{r, warning=FALSE}
+tidyfit_terms %>%
+mutate(term = reorder_within(term, beta, topic)) %>%
+ggplot(aes(beta, term, fill = factor(topic))) +
+geom_col(show.legend = FALSE) +
+facet_wrap(~ topic_label, scales = "free") +
+scale_y_reordered()
+```
+
+```{r, warning=FALSE}
+# To find gamma_topics
+gamma_topics<-tidy(tidyfit,matrix="gamma")
+
+# To pivot the gamma_topics
+gamma_topics<-gamma_topics %>%
+  pivot_wider(names_from=topic,values_from=gamma)
+
+colnames(gamma_topics)<-c("document",topic_labels)
+rownames(gamma_topics) <- gamma_topics$document
+
+gamma_topics$document <- NULL
+gamma_topics<-as.data.frame(gamma_topics)
+head(gamma_topics)
+```
+
+```{r, warning = FALSE}
+#Run PCA and plot the Biplot
+#install.packages("factoextra")
+library(factoextra)
+pcah2 <- FactoMineR::PCA(gamma_topics,graph = FALSE)
+factoextra::fviz_pca_var(pcah2)
+
+# To extract the theta matrix from the fitted object
+convergence_theta <- as.data.frame(tidyfit$theta)
+colnames(convergence_theta) <- topic_labels
+
+# To use correlation analysis to check if PCA or FA can be used to reduce the number of topic solutions further
+datamatrix <- cor(convergence_theta)
+corrplot(datamatrix, method="number")
+
+# To join topics with the doc_id
+causal_topic_df <- cbind(out$meta,convergence_theta)
+
+# To use estimateEffect function
+effects <- estimateEffect(~ratings,
+                          stmobj = tidyfit,
+                          metadata = out$meta )
+
+# To plot the topic models by usefulness
+plot(effects, covariate = "ratings",
+     topics = c(1:10),
+     model = tidyfit, method = "difference",
+     cov.value1 = "100", cov.value2 = "0",
+     xlab = "Low Rating … High Rating",
+     xlim = c(-0.02,0.02),
+     main = "Marginal Effects",
+     custom.labels = topic_labels,
+     ci.level = 0.05,
+     labeltype = "custom")
+
+# To plot the topics by topic proportions
+par(mfrow=c(2,5))
+for(i in 1:length(topic_labels)){
+plot(effects, covariate = "ratings",
+     topics = i,
+     model = tidyfit, method = "continuous",
+     xlab = "Ratings",
+     main = topic_labels[i],
+     printlegend = FALSE,
+     custom.labels =topic_labels[i],
+     labeltype = "custom")
+}
+
+# To select only relevant columns from casual_topic_df
+causal_topic_df <- causal_topic_df %>%
+  select(doc_id, "Bass Guitars", "PA & Stage",
+                  "Acoustic Guitars","Guitar Strings",
+                  "Microphone","Electrical Cables",
+                  "Guitar Accessories","Musical Tuners",
+                  "Audio", "Cases & Stands")
+
+# To select only relevant columns from tidy_model
+causal_topic_tidy <- tidy_model %>%
+  select(doc_id, ratings, adj_bing_sentiment)
+
+# To create a df specific for the regression model
+causal_topic_df %>%
+left_join(causal_topic_tidy, by = "doc_id") %>% 
+na.omit() -> regress_stm
+
+# To convert ratings to a factor
+regress_stm$ratings <- as.factor(regress_stm$ratings)
+
+# To run an ordinal logistic regression on each topic
+m0 <- polr(ratings ~ adj_bing_sentiment, data = regress_stm, Hess=TRUE)
+m1 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Bass Guitars`, data = regress_stm, Hess=TRUE)
+m2 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`PA & Stage`, data = regress_stm, Hess=TRUE)
+m3 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Acoustic Guitars`, data = regress_stm, Hess=TRUE)
+m4 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Guitar Strings`, data = regress_stm, Hess=TRUE)
+m5 <- polr(ratings ~ adj_bing_sentiment + regress_stm$Microphone, data = regress_stm, Hess=TRUE)
+m6 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Electrical Cables`, data = regress_stm, Hess=TRUE)
+m7 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Guitar Accessories`, data = regress_stm, Hess=TRUE)
+m8 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Musical Tuners`, data = regress_stm, Hess=TRUE)
+m9 <- polr(ratings ~ adj_bing_sentiment + regress_stm$Audio, data = regress_stm, Hess=TRUE)
+m10 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Cases & Stands`, data = regress_stm, Hess=TRUE)
+
+stargazer::stargazer(m0,m1,m2,m3,m4,m5,m6,m7,m8,m9,m10, type="text", add.lines= list(c("Nagelkerke", round(PseudoR2(m0, which = c("Nagelkerke")),4), round(PseudoR2(m1, which = c("Nagelkerke")),4),round(PseudoR2(m2, which = c("Nagelkerke")),4),round(PseudoR2(m3, which = c("Nagelkerke")),4),round(PseudoR2(m4, which = c("Nagelkerke")),4),round(PseudoR2(m5, which = c("Nagelkerke")),4),round(PseudoR2(m6, which = c("Nagelkerke")),4),round(PseudoR2(m7, which = c("Nagelkerke")),4),round(PseudoR2(m8, which = c("Nagelkerke")),4),round(PseudoR2(m9, which = c("Nagelkerke")),4),round(PseudoR2(m10, which = c("Nagelkerke")),4)                                                        )))
+```
+
+# Introduction
+Among 24 various categories of data available about Amazon, Musical Instruments is selected. With over 18 million reviews across all categories, this report aims to examine the Musical Instrument category, which makes up the least proportion, and explores the current sentiment by its reviewers and its future growth potential as an emerging category for Amazon.
+
+Two data sets were explicitly analyzed, the reviews data, which holds information about the reviews published by customers, and the product metadata, which holds information about the reviewed products, such as product name, product description and price. Pre-processing cleans and transforms the data sets prior to analysis. The major sections of this report are: 
+
+1. Pre-Processing Stage
+2. Part A: Construction of Corpus
+3. Part B: Sentiment Association with Rating Score
+4. Part C: Topic Modelling 
+
+## Data Staging
+
+### Data Preparation 
+Reviews data and product metadata were first converted into data frames using the stream_in function. Only in the initial phase, 1,000 records were used for coding efficiency. Duplicated and missing values were removed. All records were ordered chronologically.
+
+```{r, warning=FALSE, eval=FALSE}
+# To remove NA values
+fivecore_data$reviewText <- na.omit(fivecore_data$reviewText)
+
+# To remove duplicate records
+fivecore_data <- distinct(fivecore_data)
+
+# To sort review by unixReviewTime
+fivecore_data <- fivecore_data[order(as.Date(as.POSIXct(fivecore_data$unixReviewTime, origin="1970-01-01"))),]
+```
+
+Document identification, such as doc1, doc2, were appended to each review. Prior to pre-processing, relevant columns were renamed and rearranged into requirements for VCorpus.
+
+```{r, warning=FALSE, eval=FALSE}
+# To create a column with repeated values called "doc"
+doc_rep <- data.frame(rep(c("doc"),times=NROW((tidy))))
+
+# To rename column to "doc_rep"
+names(doc_rep)[names(doc_rep) == colnames(doc_rep)] <- "doc_rep"
+
+# To add row numbers to new column called "doc_id"
+fivecore_data$doc_id <- 1:nrow(fivecore_data)
+
+# To concatenate "doc_rep"
+fivecore_data$doc_id <- paste0(doc_rep$doc_rep,fivecore_data$doc_id)
+
+# To rearrange columns into required format of doc_id", "text", "var3", "var4"...
+col_order <- c("doc_id", "reviewText","asin", "overall",
+               "helpful", "summary", "unixReviewTime",
+               "reviewerID", "reviewerName", "reviewTime" )
+fivecore_reordered <- fivecore_data[, col_order]
+fivecore_selected_a <- fivecore_reordered[,(1:7)]
+fivecore_selected_b <- fivecore_reordered[,(1:7)]
+
+# To rename columns to standard "doc_id", "text", etc format required for VCorpus from a data frame
+names(fivecore_selected_a) <- c("doc_id","text","asin","ratings","helpfulness", "summary", "review_time")
+
+names(fivecore_selected_b) <- c("doc_id","text","asin","ratings","helpfulness", "summary", "review_time")
+```
+
+### Data Pre-Processing
+The reviews data were duplicated into set A and set B as they require different pre-processing steps. One is used for bag-of-words analysis and the other for sentiment analysis. The qdap and tm packages were used.
+
+For set A, text replacements for abbreviation, contraction, ordinal, and symbol were done. Then text removals of punctuation, numbers, customized stop words, and whitespaces were done followed by lower case texts conversion.
+
+```{r, warning=FALSE, eval=FALSE}
+# To create a function to clean text
+qdap_clean_part_a <- function(x) {
+  x <- replace_abbreviation(x) # eg. "Mr." becomes "Mister"
+  x <- replace_contraction(x) # eg. "isn't" becomes "is not"
+  x <- replace_ordinal(x) # eg. "1st" becomes "first"
+  x <- tolower(x) # eg. "Mine" becomes "mine"
+  x <- replace_symbol(x) # eg. "$" becomes "dollar"
+  return(x)
+}
+
+# To exclude stopwords which may be important
+stopWordsNotDeleted<- c("off")
+stopWordsUpdated <- stopwords.default[! stopwords.default %in% stopWordsNotDeleted] ## new Stopwords list
+
+# To create a function to clean VCorpus data
+tm_clean_a <- function(corpus) {
+  corpus <- tm_map(corpus, removePunctuation) # Remove punctuation (eg. remove "." to "")
+  corpus <- tm_map(corpus, removeNumbers )# Remove numbers (eg. remove "1" to "")
+  corpus <- tm_map(corpus, removeWords, # Remove english common and custom stopwords 
+                 c(stopWordsUpdated , "hi", "hello", "amazon", "one", "two",
+                   "three", "four", "five", "six", "seven",
+                   "eight", "nine", "ten", "really", "will",
+                   "just", "a","b","c","d","e","f","g","h","i",
+                   "j","k","l","m","n","o","p","q","r","s","t",
+                   "u","v","w","x","y","z","youll")) # Add custom stopwords
+  corpus <- tm_map(corpus, stripWhitespace) # Eliminate extra white spaces
+  return(corpus)
+}
+```
+
+For set B, text replacements for abbreviation, contraction, and ordinal were done. Text removals of numbers and whitespaces were completed.       
+
+```{r, warning=FALSE, eval=FALSE}
+# To create a function to clean text
+qdap_clean_part_b <- function(x) {
+  x <- replace_abbreviation(x) # eg. "Mr." becomes "Mister"
+  x <- replace_contraction(x) # eg. "isn't" becomes "is not"
+  x <- replace_ordinal(x) # eg. "1st" becomes "first"
+  return(x)
+}
+
+# To create a function to clean VCorpus data
+tm_clean_b <- function(corpus) {
+  corpus <- tm_map(corpus, removeNumbers )# Remove numbers (eg. remove "1" to "")
+  corpus <- tm_map(corpus, stripWhitespace) # Eliminate extra white spaces
+  return(corpus)
+}
+```
+
+The cleaned VCorpus were converted into tidy data.
+
+```{r, warning=FALSE, eval=FALSE}
+# To generate tidy dataframe
+tidy_a <- data.frame(cleaned_df_corpus_a)
+tidy_b <- data.frame
+```
+
+Using udpipe_annotate function, parts-of-speech tagging of set A was completed, and universal-parts-of-speech specifically, nouns, adjectives, and adverbs were retained during lemmatization.
+
+```{r, warning=FALSE, eval=FALSE}
+# Setup the annotation process using the `udpipe_annotate` function
+postagged_a <- udpipe_annotate(langmodel,
+                             tidy_a$text,
+                             parallel.cores = 8, 
+                             trace = 100)
+
+# To cast output to a dataframe
+postagged_a <- as.data.frame(postagged_a)
+
+# To filter and detokenize the postagged terms
+lemmatized <- postagged_a %>% filter(upos %in% c("NOUN",
+                                              "ADJ",
+                                              "ADV")) %>% 
+  select(doc_id,lemma) %>% group_by(doc_id) %>% 
+  summarise(documents_pos_tagged = paste(lemma,collapse = " "))
+
+# To join lematized sentence with tidy_a data
+tidy_a <- tidy_a %>% 
+  left_join(lemmatized, by = c("doc_id"="doc_id"))
+```
+
+Using the udpipe_annotate function, parts-of-speech tagging of set B was completed for the later purpose of features extraction during sentiment analysis. 
+```{r, warning=FALSE, eval=FALSE}
+# Setup the annotation process using the `udpipe_annotate` function
+postagged_b <- udpipe_annotate(langmodel,
+                             tidy_b$text,
+                             parallel.cores = 8, 
+                             trace = 100)
+
+# To cast output to a dataframe
+postagged_b <- as.data.frame(postagged_b)
+```
+
+## Part A: Construction of Corpus
+### What are the dominant words per star rating category?
+Word counts alone may not be meaningful hence, term frequency-inverse document frequency, tf-idf, which weighs words based on relevance is used. Using the bags-of-word approach, unnest_tokens function was used on set A tidy. Tokens were counted, sorted, and filtered to tokens which appeared more than five times. The slice_max function obtained the top 10 dominant words by tf-idf for each star rating.
+
+```{r, warning=FALSE, eval=FALSE}
+# To group tokens by ratings and words
+unnested_reviews <- tidy_a %>%
+  unnest_tokens(word,text) %>%
+  count(ratings, word, sort=TRUE) %>%
+  ungroup() %>%
+  rename(count=n) %>%
+  filter(count>5)
+```
+
+```{r, warning=FALSE, echo=FALSE}
+# To create a plot of words with the top 10 TF-IDF scores by review ratings
+reviews_tf_idf %>%
+  group_by(ratings) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, reorder_within(word, tf_idf, ratings),
+             fill = ratings)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_reordered() + 
+  facet_wrap(~ratings, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL) + ggtitle("Most Dominant Words By Category Ratings")
+```
+
+From the above, we observed that the most dominant words for ratings in ascending order are "garbage", "wire", "large", "sm", and "highly". 
+
+Interestingly, in 4-star ratings, the model "sm" of the brand Shure appears more frequently than the brand name itself. Additionally, tf-idf scores of the dominant words in 1-star ratings are larger than other ratings indicating higher relevance of its words.
+
+Word clouds of the top 50 words by tf-idf for ratings were plotted to better visualize the dominant words that have more relevance. The more relevant, the larger the size of the word within its respective word cloud.
+
+```{r, warning=FALSE, echo=FALSE}
+# To produce wordcloud of top 50 words for each star ratings
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "1 Star Ratings")
+wordcloud(words=word_cloud_1$word,
+          main="Hello",
+          freq=word_cloud_1$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1)) 
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "2 Stars Ratings")
+wordcloud(words=word_cloud_2$word,
+          freq=word_cloud_2$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "3 Stars Ratings")
+wordcloud(words=word_cloud_3$word,
+          freq=word_cloud_3$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "4 Stars Ratings")
+wordcloud(words=word_cloud_4$word,
+          freq=word_cloud_4$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(0.1, 0.4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.1, cex=1.5, offset=0.5, "5 Stars Ratings")
+wordcloud(words=word_cloud_5$word,
+          freq=word_cloud_5$tf_idf,
+          max.words=50,
+          random.order=FALSE,colors=brewer.pal(8,"Dark2"),
+          scale=c(2.25,0.1))
+```
+
+### What are the most common word combinations used per rating category?
+Term frequency, tf, tells how commonly words appear in a document. From bags-of-word approach, the unnest_tokens function was used on set A tidy again with the token argument set to ngrams and n set to 2. Tokens were counted, sorted, and filtered to tokens which appeared more than 5 times. The slice_max function was used to obtain the top 10 most common two-word combinations (bigram) by tf as this balances reviews of different lengths.
+
+```{r, warning=FALSE, echo=FALSE}
+# To create a n-gram where n=2 (aka bigram)
+tidy_a %>% 
+  unnest_tokens(word,text,token="ngrams",n=2) %>% 
+  na.omit() %>% 
+  count(ratings,word,sort=TRUE) %>% 
+  bind_tf_idf(word,ratings,n) %>% 
+  arrange(desc(tf_idf)) -> bigram_tf_idf
+
+# To create a plot of bigram words with the highest tf scores by ratings
+bigram_tf_idf %>% 
+  group_by(ratings) %>% 
+  slice_max(tf,n=10) %>% 
+  ungroup() %>% 
+  ggplot(aes(tf, reorder_within(word, tf,ratings), fill = ratings)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_reordered() + 
+  facet_wrap(~ratings, ncol = 2, scales = "free") +
+  labs(x = "tf", y = NULL) + ggtitle("Most Common Word Combinations By Category Ratings")
+```
+
+From the above, we observed that the most common bigrams for ratings in ascending order are "planet waves", "power supply", "planet waves", "works well", and "highly recommend".
+
+Surprisingly, the bigram ("planet waves") appeared more than once in the lower ratings which may indicate an emerging brand on Amazon. 
+
+Therefore, to grow the Musical Instrument category and the platform, it may be worth investigating further on the challenges brands such as "planet waves" face, in improving their ratings on Amazon.
+
+### What variables can be extracted from the text that can be related with rating score?
+Variables extracted were divided into text and non-text features. The text features are length of reviews, count of nouns, count of verbs, count of interjections, count of exclamations, and score on readability. 
+
+From the parts-of-speech tagging of set B, the count of nouns was filtered to the top 1,000 brand names mentioned in reviews. The brand names were identified through ASIN from the product metadata.  
+
+```{r, warning=FALSE, eval=FALSE}
+# To select top 1000 brands
+top1000_brands <- metadata_brand %>%
+  na.omit() %>%
+  count(brand) %>%
+  arrange(desc(n)) %>%
+  top_n(1000)
+
+# To remove special characters from top 1000 brands list
+x <- "a1~!@#$%^&*(){}_+:\"<>?,./;'[]-="
+top1000_brands$brand <- str_replace_all(top1000_brands$brand, "[[:punct:]]", " ")
+
+# To lower all characters in top 1000 brands list
+top1000_brands$brand <- tolower(top1000_brands$brand)
+
+# To trim white spaces in top 1000 brands list
+top1000_brands$brand <- trimws(top1000_brands$brand)
+
+# To filter "Nouns" to brands which exist in the "Brands" column
+# Note: Nouns originally had many irrelevant nouns hence this step is required
+noun_count <- noun_count[noun_count$token %in% top1000_brands$brand, ]
+
+# To count number of nouns present in the reviews
+noun_count <- noun_count %>%
+  group_by(doc_id) %>%
+  count(token) %>%
+  group_by(doc_id) %>%
+  summarise(text_f2_nouncount = sum(n))
+
+# To join 
+feature_observed <- feature_observed %>% 
+  left_join(noun_count, by=c("doc_id"="doc_id"))
+```
+
+The plots demonstrate the text features extracted against ratings. Generally, higher ratings comprise larger text features. However, there are noticeably more scatter plots for ratings 4 and 5 than other ratings.
+
+```{r, warning=FALSE, echo=FALSE}
+# Text Features
+grid.arrange(text_f1,text_f2,text_f3,text_f4,
+             text_f5,text_f6, ncol=2)  
+```
+
+The non-text features are price, sales rank, category count and helpful vote count. Prior to 2018, each review had upvote and downvote of reviews which customers found helpful. As the reviews data used is from 2004 to 2014, the count of upvote was extracted as a feature.
+
+```{r, warning=FALSE, eval=FALSE}
+# Note: Amazon dataset from 2014 had upvote and downvote on reviews. 
+# Note: Since 2018, downvote function had been removed. 
+# Standardising "helpfulness" column into ":" format
+feature_observed$helpfulness <- sub("c", "", feature_observed$helpfulness)
+feature_observed$helpfulness <- sub(", ", ":", feature_observed$helpfulness)
+feature_observed$helpfulness <- sub("\\(", "", feature_observed$helpfulness)
+feature_observed$helpfulness  <- sub(")", "", feature_observed$helpfulness)
+
+# To separate helpfulness column into "positive_helpful" and "total_helpful"
+feature_observed <- feature_observed %>%
+  tidyr::separate(helpfulness,c("positive_helpful","total_helpful"), sep=":") 
+# To convert "positive_helpful" and "total_helpful" into integer
+feature_observed$positive_helpful <- as.integer(feature_observed$positive_helpful)
+feature_observed$total_helpful <- as.integer(feature_observed$total_helpful)
+
+# To count number of helpful votes
+helpful_count <- feature_observed %>%
+  select(doc_id,positive_helpful) %>%
+  rename(nontext_f4_helpfulcount = positive_helpful)
+
+# To join 
+feature_observed <- feature_observed %>% 
+  left_join(helpful_count, by=c("doc_id"="doc_id"))
+```
+
+The plot demonstrates the non-text features extracted against ratings. Higher ratings comprise larger text features specific to price, sales rank, and helpful count. However, most products reviewed were listed between 3 to 6 different categories.
+
+```{r, warning=FALSE, echo=FALSE}
+# Non-Text Features
+grid.arrange(nontext_f1,nontext_f2,nontext_f3, nontext_f4)
+```
+
+## Part B: Sentiment Association with Rating Score
+### Polarity of sentiment reviews over the decade
+From 2004 to 2014, the polarity score is generally near zero across the period. The white spaces on the polarity chart across duration indicated fewer reviews for lower ratings. From the polarity table, only 1-star ratings have an average polarity below zero, indicating overall negative sentiment, while other ratings have average polarities above zero, indicating overall positive sentiment by customers.
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot the conversation polarity
+plot(polarity_by_ratings)
+
+# To print out results
+(polarity_by_ratings)
+```
+
+### Evaluation of the dictionary you selected to score the sentimnent
+For affection categorization, Bing, Loughran, and NRC dictionaries were used to evaluate sentiment scores. For comparison between dictionaries, the sentiments Loughran and NRC dictionaries were adapted to the Bing dictionary by only detecting positive and negative sentiments. The formula used to calculate the sentiment score for each dictionary was (positive-negative)/(positive+negative). The bar chart below suggests that Bing has the highest sentiment score while Loughran for ratings 1 has a negative sentiment score.  
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot sentiment results from loughran and bing and nrc dictionaries
+ggplot(all_results, aes(x=ratings,y=sentiment,fill=dictionary)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~dictionary,ncol=1,scales="free_y")
+```
+
+After normalization, the dictionaries were evaluated using information gain, and Bing has the highest information gain of 0.0264.
+
+```{r, warning=FALSE, echo=FALSE}
+# To rename column and transpose df
+display_ig <- all_ig_output %>%
+  rename("Information Gain" = attr_importance)
+display_ig <-as.data.frame(t(display_ig))
+  
+# To display information gain in a simple table
+display_ig  %>%
+    knitr::kable(caption= "Evaluation of the Dictionary using Information Gain",
+               digits=4,
+               align="ccc", 
+               col.names = c("Loughran Dict.",
+                             "Bing Dict.",
+                             "NRC Dict."))
+```
+
+### How you handled spelling mistakes, negations and other text modifiers
+Using replace_internet_slang function, improper texts such as "lol" were translated into "laughing out loud." Then, symbols were filtered to relevant and most used symbols from the parts-of-speech tagging in set B. Each symbol was replaced either with the word "happy" or "sad" as associated in the Bing dictionary.
+
+```{r, warning= FALSE, eval = FALSE}
+### Handling Internet Slang ###
+# To change internet slang to proper english sentences
+tidy_b$text <- replace_internet_slang(tidy_b$text)
+
+### Handling Symbols ###
+# To view top 30 most frequent symbols used 
+symbol_count <- postagged_b %>%
+  filter(upos=="SYM") %>%
+  select(token) %>%
+  count(token) %>%
+  arrange(desc(n)) %>%
+  top_n(30)
+
+# To only identify relevant symbols
+symbol_count <- symbol_count[!symbol_count$token %in% c("$","%","+","x","#","-","=","$$",
+                                                        ":.",".+","|","hi-",":+","","$",
+                                                        "-nx","/","tortex","ymmv.","???",
+                                                        "@","+++","mic.","mix","q-"), ]
+
+# To maintain only relevant symbols
+symbol_count <- symbol_count %>%
+  top_n(6)
+
+# To attach sentiment to relevant symbols
+symbol_count$sentiment <- c("happy","happy","happy","sad","happy","happy")
+
+# To replace symbols with sentiments in tidy data
+tidy_b$text <- replace_abbreviation(tidy_b$text,symbol_count$token,symbol_count$sentiment)
+```
+
+Using the check_spelling function, incorrect spellings were given suggestions. We excluded the top 3,000 dominant words from the suggestions. We also filtered words which were misspelled between 3 to 5 times and had character lengths of more than 7. These were then corrected with the suggestions.
+
+```{r, eval = FALSE}
+### Handling Spelling Mistakes ###
+# To check for spelling errors (excluding stopwords)
+check_text <- tidy_a$text
+check_process <- check_spelling(check_text, assume.first.correct=FALSE)
+
+# To exclude top 3,000 dominant words from spelling correction
+top_words <- tidy_a %>%
+  unnest_tokens(word,text) %>%
+  count(word, sort=TRUE) %>%
+  ungroup() %>%
+  arrange(desc(n)) %>%
+  top_n(3000)
+
+check_process <- check_process[!check_process$not.found %in% top_words$word, ]
+
+# To count top misspelled words (excluding dominant words and stopwords)
+top_misspelled <- tidy_b %>%
+  unnest_tokens(word,text) %>%   
+  count(word, sort=TRUE) %>%
+  ungroup() %>%
+  arrange(desc(n))
+
+top_misspelled$misspelled <- top_misspelled$word %in% check_process$not.found
+top_misspelled$dominant <- top_misspelled$word %in% top_words$word
+
+# To filter words misspelled two to four times
+top_misspelled <- top_misspelled %>% 
+  filter(misspelled=="TRUE", dominant=="FALSE", n>2 & n<6)
+
+# To carefully select misspelled words to have spelling correction 
+check_process <- check_process[check_process$not.found %in% top_misspelled$word, ]
+
+# To count number of alphabets
+check_process$strcount <- str_count(check_process$not.found)
+
+# To filter characters more than 7 for replacement
+check_process_filtered <- check_process %>%
+  filter(strcount>7)
+
+# To replace misspelled words with suggested words in tidy data
+tidy_b$text <- replace_abbreviation(tidy_b$text,check_process_filtered$not.found,check_process_filtered$suggestion)
+```
+
+To handle negations and text modifiers, the function sentiment_by and get_sentences were used with the chosen Bing dictionary specified.
+
+```{r, eval=FALSE}
+### Unnormalised Sentiment for Bing Dictionary ###
+tidy_b$bing <- sentiment_by(get_sentences(tidy_b$text), polarity_dt = lexicon::hash_sentiment_huliu)
+```
+
+### How you normalized dictionary coverage based on the review length
+It is assumed that customers who devote more effort would have a stronger expression of feelings in their reviews. Therefore, for comparison between reviews of different lengths, the sentiment scores were normalized by dividing with dictionary coverage. Dictionary coverage was calculated by dividing the total words detected in Bing by the total words of the review.
+
+```{r, warning=FALSE, eval=FALSE}
+# To count number of words per review
+tidy_b$total_tokens_per_doc <- tidy_b$bing$word_count
+total_words_per_doc <- tidy_b %>%
+  select(doc_id, total_tokens_per_doc)
+
+# To join tokens with afinn, bing and nrc dictionaries
+dictionary_coverage <- tidy_token %>%
+  select(doc_id,word) %>%
+  left_join(bing_dictionary, by = c("word" = "word")) 
+
+# To tag "1" when sentiment from dictionary is used. To tag "0" otherwise.
+dictionary_coverage$sentiment <- ifelse(grepl("positive|negative", dictionary_coverage$sentiment),1,0)
+  
+# To rename columns
+dictionary_coverage <- dictionary_coverage %>% 
+  rename(bing_covered = sentiment)
+
+# To calculate bing dictionary coverage
+bing_coverage <- dictionary_coverage %>%
+  select(doc_id, bing_covered) %>%
+  group_by(doc_id) %>%
+  summarise(bing_sentiment=sum(bing_covered))
+
+# To join bing coverage df with total tokens per doc df
+bing_coverage <- bing_coverage %>% 
+  left_join(total_words_per_doc, by = c("doc_id"="doc_id"))
+bing_coverage <- bing_coverage %>%
+  mutate(bing_coverage=round(bing_sentiment/total_tokens_per_doc,4))
+
+# To select only dictionary coverage 
+bing_coverage <- bing_coverage %>%
+  select(doc_id, bing_coverage)
+
+# To join dictionary coverage to tidy data
+tidy_b <- tidy_b %>%
+  left_join(bing_coverage, by=c("doc_id"="doc_id")) 
+
+# To calculate adjusted average sentiment score by dictionary coverage
+tidy_b <- tidy_b %>%
+  mutate(adj_bing_sentiment = round(tidy_b$bing$ave_sentiment/tidy_b$bing_coverage,4))
+```
+
+### Evaluate the preditability of product ratings against the variables obtained from the review text
+Using the ordinal logistic regression, the first model was built with a normalized sentiment score as the baseline. Subsequently, the second and third models included this with text and non-text features identified earlier.
+
+```{r, warning=FALSE, eval=FALSE}
+# To create an ordinal logistic regression model reference
+m_ref <- polr(ratings ~ adj_bing_sentiment, data = oversample_data, Hess=TRUE)
+
+# To build a model with text features
+m_text <- polr(ratings ~ adj_bing_sentiment + text_f2_nouncount, text_f3_verbcount + text_f4_intjcount+ text_f5_exclaimcount, data = oversample_data, Hess=TRUE)
+
+# To build a model with nontext features
+m_nontext <- polr(ratings~ adj_bing_sentiment + nontext_f3_categorycount + nontext_f4_helpfulcount, data = oversample_data, Hess=TRUE)
+```
+
+Using the stargazer function, we observe:
+
+1. From the baseline model, Nagelkerke's R square shows that the normalized sentiment score explains 21.4% of the variance in ratings. Subsequently, R square increases slightly when non-text features and text features were added to the reference model.
+
+2. From the model with text features, the count of nouns, verbs, interjections, and exclamation marks are statistically significant (p<0.01). Specifically, increases in count of nouns and exclamation marks lead to increases in ratings by 0.070 and 0.148; increases in count of verbs and interjections lead to decreases in ratings by 0.014 and 0.131.
+
+3. The model with non-text features showed that helpful count was negatively correlated with ratings with p<0.01, while category count was not statistically significant.
+
+```{r, warning=FALSE, echo=FALSE}
+# To knit the report using stargazer
+stargazer::stargazer(m_ref, m_text, m_nontext, type = "text", add.lines= list(c("Nagelkerke", round(PseudoR2(m_ref, which = c("Nagelkerke")),4), round(PseudoR2(m_text, which = c("Nagelkerke")),4), round(PseudoR2(m_nontext, which = c("Nagelkerke")),4) )
+                                                                              ))
+```
+
+## Part C: Topic Modelling
+### The number of topics that need to be created for your product category corpus
+From parts-of-speech tagging of set A, we used the textProcessor function to remove customized stop words and perform other basic text pre-processing. Using the prepDocuments function, words appearing less than 1% were removed. To obtain a stable topic solution, we set seed. Finally, we ran the searchK function to find optimal k topics.
+
+```{r, warning=FALSE, eval=FALSE}
+# To remove customized stop words and perform other basic text pre-processing
+processed <- textProcessor(tidy_a_stm$text_lemmatized,
+                           metadata = tidy_a_stm,
+                           customstopwords = c("last", "time", "much", "less", "even", "right", "use", "also", "well", "back", "great", "price", "product", "problem", "never", "first", "issue", "easy", "good", "buy", "love", "number", "nice", "think", "new", "enough", "year", "better", "thing", "best", "day", "different", "regular", "effect", "perfect", "way", "still", "highly", "job", "model", "amazing", "always", "actually", "true", "however", "dollar", "end", "bit", "spend", "unit", "home"),
+                           stem = F)
+
+# To check if any document is removed
+processed$docs.removed
+
+# To keep those words who appear more than 1% in the document corpus
+threshold <- round(1/100 * length(processed$documents),0)
+
+# To form the dataset used for topic modelling 
+out <- prepDocuments(processed$documents,
+                     processed$vocab,
+                     processed$meta,
+                     lower.thresh = threshold)
+
+# To check if any document is removed
+out$docs.removed
+
+# To find the optimal number of topics
+# To achieve *heuristic* search for the K parameter using the `searchK` function.
+#This requires a range for the K values to be evaluated to be supplied as a vector.
+
+# To set a seed
+set.seed(16222527)
+
+# To search for the optimum k topic models
+numtopics <- searchK(out$documents,out$vocab,K=seq(from=5, to=11,by=1)) # k=10
+numtopics$results
+```
+
+From the diagnostic values, the held-out likelihood is highest between 9 and 11 topics, and residuals are least around 10. Thus, the optimal topic number k=10 was selected.
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot the number of topics
+plot(numtopics)
+```
+
+Using the stm function, the optimal k was set to 10, and the prevalence was set to ratings topic solutions generation.
+
+```{r, warning=FALSE, eval=FALSE}
+# To execute the model with k=10
+tidyfit <- stm(documents = out$documents,
+                   vocab = out$vocab,
+                   K = 10,
+                   prevalence =~ ratings,
+                   max.em.its = 75, 
+                   data = out$meta,
+                   reportevery=10,
+                   # gamma.prior = "L1",
+                   sigma.prior = 0.7,
+                   init.type = "LDA")
+
+# To get a summary of the topics accross the corpus and inspect the words
+topic_summary <- summary(tidyfit)
+```
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot the stm object to see the percentage ot the topics in the corpus
+plot(tidyfit)
+```
+
+Each topic was labelled by evaluating its top dominant words and overall term frequency in the plots below.
+
+```{r, warning=FALSE, eval=FALSE}
+# To get the top 10 terms:
+tidyfit_terms<-tidyfit_topics %>%
+  group_by(topic) %>%
+  slice_max(beta,n=10) %>%
+  ungroup() %>%
+  arrange(topic,desc(beta))
+tidyfit_terms
+
+# topic labelling
+topic_labels <- c("Bass Guitars", "PA & Stage",
+                  "Acoustic Guitars","Guitar Strings",
+                  "Microphone","Electrical Cables",
+                  "Guitar Accessories","Musical Tuners",
+                  "Audio", "Cases & Stands")
+
+# Create a column to name the topics.
+tidyfit_terms <- tidyfit_terms %>%
+ mutate(topic_label = case_when((topic == 1) ~ topic_labels[1],
+                                (topic == 2) ~ topic_labels[2],
+                                (topic == 3) ~ topic_labels[3],
+                                (topic == 4) ~ topic_labels[4],
+                                (topic == 5) ~ topic_labels[5],
+                                (topic == 6) ~ topic_labels[6],
+                                (topic == 7) ~ topic_labels[7],
+                                (topic == 8) ~ topic_labels[8],
+                                (topic == 9) ~ topic_labels[9],
+                                (topic == 10) ~ topic_labels[10]))
+```
+
+```{r, warning=FALSE, echo=FALSE}
+tidyfit_terms %>%
+mutate(term = reorder_within(term, beta, topic)) %>%
+ggplot(aes(beta, term, fill = factor(topic))) +
+geom_col(show.legend = FALSE) +
+facet_wrap(~ topic_label, scales = "free") +
+scale_y_reordered()
+```
+
+After deriving the gamma matrix and pivoting it wider, we have 10 columns for each topic with each row representing the respective gamma values. Thereafter, we used the cbind function to join this gamma matrix with doc_id. For ordinal logistic regression, we used the left_join function to join the gamma matrix to set B tidy.
+
+```{r, warning=FALSE, eval=FALSE}
+# To extract the theta matrix from the fitted object
+convergence_theta <- as.data.frame(tidyfit$theta)
+colnames(convergence_theta) <- topic_labels
+
+# To use correlation analysis to check if PCA or FA can be used to reduce the number of topic solutions further
+datamatrix <- cor(convergence_theta)
+
+# To join topics with the doc_id
+causal_topic_df <- cbind(out$meta,convergence_theta)
+
+# To select only relevant columns from casual_topic_df
+causal_topic_df <- causal_topic_df %>%
+  select(doc_id, "Bass Guitars", "PA & Stage",
+                  "Acoustic Guitars","Guitar Strings",
+                  "Microphone","Electrical Cables",
+                  "Guitar Accessories","Musical Tuners",
+                  "Audio", "Cases & Stands")
+
+# To select only relevant columns from tidy_model
+causal_topic_tidy <- tidy_model %>%
+  select(doc_id, ratings, adj_bing_sentiment)
+
+# To create a df specific for the regression model
+causal_topic_df %>%
+left_join(causal_topic_tidy, by = "doc_id") %>% 
+na.omit() -> regress_stm
+
+# To convert ratings to a factor
+regress_stm$ratings <- as.factor(regress_stm$ratings)
+```
+
+### The additive predictability that some topics add on estimating the rating score in contrast with the sentiment 
+Using the ordinal logistic regression, eleven models were built. The first model was built with only normalized sentiment score as the baseline. Subsequently, each other model was built by adding each individual topic.
+
+```{r, warning=FALSE, eval=FALSE}
+# To run an ordinal logistic regression on each topic
+m0 <- polr(ratings ~ adj_bing_sentiment, data = regress_stm, Hess=TRUE)
+m1 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Bass Guitars`, data = regress_stm, Hess=TRUE)
+m2 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`PA & Stage`, data = regress_stm, Hess=TRUE)
+m3 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Acoustic Guitars`, data = regress_stm, Hess=TRUE)
+m4 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Guitar Strings`, data = regress_stm, Hess=TRUE)
+m5 <- polr(ratings ~ adj_bing_sentiment + regress_stm$Microphone, data = regress_stm, Hess=TRUE)
+m6 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Electrical Cables`, data = regress_stm, Hess=TRUE)
+m7 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Guitar Accessories`, data = regress_stm, Hess=TRUE)
+m8 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Musical Tuners`, data = regress_stm, Hess=TRUE)
+m9 <- polr(ratings ~ adj_bing_sentiment + regress_stm$Audio, data = regress_stm, Hess=TRUE)
+m10 <- polr(ratings ~ adj_bing_sentiment + regress_stm$`Cases & Stands`, data = regress_stm, Hess=TRUE)
+```
+
+Overall, each topic matches or increases the total model fit with the model with topic 3 best predicting the ratings. Specifically, its R square is 10.82% which is 0.17% higher than the baseline.
+
+```{r, warning=FALSE, echo=FALSE}
+stargazer::stargazer(m0,m1,m2,m3,m4,m5,m6,m7,m8,m9,m10, type="text", add.lines= list(c("Nagelkerke", round(PseudoR2(m0, which = c("Nagelkerke")),4), round(PseudoR2(m1, which = c("Nagelkerke")),4),round(PseudoR2(m2, which = c("Nagelkerke")),4),round(PseudoR2(m3, which = c("Nagelkerke")),4),round(PseudoR2(m4, which = c("Nagelkerke")),4),round(PseudoR2(m5, which = c("Nagelkerke")),4),round(PseudoR2(m6, which = c("Nagelkerke")),4),round(PseudoR2(m7, which = c("Nagelkerke")),4),round(PseudoR2(m8, which = c("Nagelkerke")),4),round(PseudoR2(m9, which = c("Nagelkerke")),4),round(PseudoR2(m10, which = c("Nagelkerke")),4)                                                        )))
+```
+
+### Visualization of the topic solution and explanation of the insights that can be obtained from that
+Except for "Bass Guitars" and "Guitar Accessories", from the PCA plot, each topic is likely mutually exclusive, as indicated by the different directions of each topic model. This explains 28.6% variance of the reviews data.
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot the PCA 
+pcah2 <- FactoMineR::PCA(gamma_topics,graph = FALSE)
+factoextra::fviz_pca_var(pcah2)
+```
+
+The correlation between topics are less than 0.3 which signifies weak correlations. 
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot the correlation matrix of the topics
+corrplot(datamatrix, method="number")
+```
+
+The categories "Guitar Strings", "Microphone", "Guitar Accessories" and "Musical Tuners" have positive linear trend while "Bass Guitars", "PA & Stage", "Acoustic Guitars" and "Electrical Cables" have negative linear trend.
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot the topics by topic proportions
+par(mfrow=c(2,5))
+for(i in 1:length(topic_labels)){
+plot(effects, covariate = "ratings",
+     topics = i,
+     model = tidyfit, method = "continuous",
+     xlab = "Ratings",
+     main = topic_labels[i],
+     printlegend = FALSE,
+     custom.labels =topic_labels[i],
+     labeltype = "custom")
+}
+```
+
+From the marginal effects plot, "Guitar Strings", "Microphone", "Guitar Accessories" and "Musical Tuners" appear to have higher ratings which indicate customer satisfaction while the others appear to have lower ratings which indicate customer dissatisfaction.
+
+```{r, warning=FALSE, echo=FALSE}
+# To plot the topic models by satisfaction
+plot(effects, covariate = "ratings",
+     topics = c(1:10),
+     model = tidyfit, method = "difference",
+     cov.value1 = "100", cov.value2 = "0",
+     xlab = "Low Rating … High Rating",
+     xlim = c(-0.02,0.02),
+     main = "Marginal Effects",
+     custom.labels = topic_labels,
+     ci.level = 0.05,
+     labeltype = "custom")
+```
